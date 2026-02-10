@@ -1,0 +1,50 @@
+# === Core Source Code (proprietary) ===
+*.js
+*.html
+!LAWYOR_SHOWCASE.html
+*.json
+*.xml
+*.css
+*.command
+
+# Skill & AI prompts
+formatting-skill/
+contract-variable-skill/
+contract-template-transformation-skill/
+skills/
+templates/
+scripts/
+
+# Config & deployment
+Dockerfile
+.dockerignore
+ms_deploy.json
+.env.*
+!.env.*.example
+
+# Internal docs
+HANDOVER.md
+FORM_MANAGEMENT_IMPLEMENTATION.md
+WPS_NATIVE_SKILL.md
+
+# Build artifacts
+dist_updates/
+wps-addon-build/
+wps-addon-build.bak_*/
+backups/
+
+# Runtime
+server.log
+server.pid
+wps_debug.log
+wps_debug.pid
+node_modules/
+package-lock.json
+*.pdf
+
+# macOS
+.DS_Store
+
+# IDE
+.cursor/
+.cursorrules

@@ -1,5 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "buildCommand": "rm -rf public && mkdir -p public && cp -R templates skills contract-variable-skill contract-template-transformation-skill formatting-skill css js public/ && (cp -R *.html *.js *.json *.css public/ 2>/dev/null || true)"
+  "buildCommand": "rm -rf public && mkdir -p public && cp -R templates skills contract-variable-skill contract-template-transformation-skill formatting-skill public/ && (cp -R *.html *.js *.json public/ 2>/dev/null || true)"
 }

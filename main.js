@@ -10,7 +10,7 @@ const PEVC_BOOTSTRAP_STORAGE_KEY = "pevc_bootstrap_config_v1";
 const PEVC_RUNTIME_STORAGE_KEY = "pevc_runtime_config_v1";
 const PEVC_DEFAULT_BOOTSTRAP = {
     // 建议上线后替换为你的云端 manifest 地址。
-    manifestUrl: "",
+    manifestUrl: "https://cdn.jsdelivr.net/gh/2838892094yjc-glitch/lawyor@main/cloud/manifest.json",
     // 如果你希望强制固定远端 taskpane，可直接写这里。
     taskpaneUrl: "",
     requestTimeoutMs: 2500,

@@ -1,0 +1,13 @@
+{
+  "version": "2026.02.14.bootstrap",
+  "taskpaneUrl": "https://cdn.jsdelivr.net/gh/2838892094yjc-glitch/lawyor@main/taskpane.html",
+  "apiBaseUrl": "https://replace-with-your-api.onrender.com",
+  "autoRefreshMs": 300000,
+  "client": {
+    "taskpaneUrl": "https://cdn.jsdelivr.net/gh/2838892094yjc-glitch/lawyor@main/taskpane.html",
+    "autoRefreshMs": 300000
+  },
+  "services": {
+    "apiBaseUrl": "https://replace-with-your-api.onrender.com"
+  }
+}

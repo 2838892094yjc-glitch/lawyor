@@ -1,0 +1,13 @@
+{
+  "version": "2026.02.14.1",
+  "taskpaneUrl": "https://your-app.vercel.app/taskpane.html",
+  "apiBaseUrl": "https://your-api.onrender.com",
+  "autoRefreshMs": 300000,
+  "client": {
+    "taskpaneUrl": "https://your-app.vercel.app/taskpane.html",
+    "autoRefreshMs": 300000
+  },
+  "services": {
+    "apiBaseUrl": "https://your-api.onrender.com"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "pevc-wps-addin",
+  "version": "1.0.24",
+  "description": "Lawyor - AI 法律文档助手",
+  "main": "main.js",
+  "scripts": {
+    "debug": "wpsjs debug",
+    "build": "wpsjs build",
+    "publish": "wpsjs publish",
+    "ai:claude": "node claude-analyze-server.js",
+    "ai:kimi": "node scripts/kimi-start-with-test.js",
+    "ai:kimi:server": "node kimi-analyze-server.js",
+    "ai:kimi:test": "node scripts/kimi-self-test.js",
+    "ai:kimi:agent:install": "bash scripts/install-kimi-launch-agent.sh",
+    "ai:kimi:agent:uninstall": "bash scripts/uninstall-kimi-launch-agent.sh",
+    "ai:kimi:agent:status": "bash scripts/status-kimi-launch-agent.sh",
+    "cloud:bootstrap:set": "node scripts/set-cloud-bootstrap.js",
+    "cloud:manifest:example": "cat cloud/manifest.example.json",
+    "cloud:manifest:gen": "node scripts/generate-cloud-manifest.js"
+  },
+  "devDependencies": {
+    "wps-jsapi": "*"
+  }
+}

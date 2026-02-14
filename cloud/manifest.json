@@ -1,13 +1,13 @@
 {
-  "version": "2026.02.14.3",
-  "taskpaneUrl": "https://lawyorverceldeploy.vercel.app/taskpane.html",
-  "apiBaseUrl": "https://lawyorverceldeploy.vercel.app/api",
+  "version": "2026.02.14.5",
+  "taskpaneUrl": "https://lawyor-1s5d.vercel.app/taskpane.html",
+  "apiBaseUrl": "https://lawyor-1s5d.vercel.app/api",
   "autoRefreshMs": 300000,
   "client": {
-    "taskpaneUrl": "https://lawyorverceldeploy.vercel.app/taskpane.html",
+    "taskpaneUrl": "https://lawyor-1s5d.vercel.app/taskpane.html",
     "autoRefreshMs": 300000
   },
   "services": {
-    "apiBaseUrl": "https://lawyorverceldeploy.vercel.app/api"
+    "apiBaseUrl": "https://lawyor-1s5d.vercel.app/api"
   }
 }

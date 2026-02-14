@@ -171,7 +171,10 @@
         if (!_retryContext) {
           try {
             var sessionContext = this._buildSessionContextForAI();
-            var dispatchResponse = await fetch('/agent/dispatch', {
+            var dispatchUrl = (window.PEVCRuntimeConfig && window.PEVCRuntimeConfig.buildApiUrl)
+              ? window.PEVCRuntimeConfig.buildApiUrl('/agent/dispatch')
+              : '/agent/dispatch';
+            var dispatchResponse = await fetch(dispatchUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({

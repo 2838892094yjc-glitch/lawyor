@@ -1192,14 +1192,21 @@ const server = http.createServer(async (req, res) => {
   sendJson(res, 404, { error: 'Not found' });
 });
 
-server.on('error', (err) => {
-  console.error(`[Kimi Bridge] startup failed: ${err.message}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  server.on('error', (err) => {
+    console.error(`[Kimi Bridge] startup failed: ${err.message}`);
+    process.exit(1);
+  });
 
-const BIND_HOST = sanitizeEnv(process.env.BIND_HOST) || '0.0.0.0';
-server.listen(PORT, BIND_HOST, () => {
-  console.log(`[Kimi Bridge] listening on http://${BIND_HOST}:${PORT}`);
-  console.log(`[Kimi Bridge] pipeline=${PIPELINE_ENABLED ? 'on' : 'off'}, semantic=${SEMANTIC_MODEL}, normalize=${STRUCT_MODEL}`);
-  console.log(`[Kimi Bridge] skill=${SKILL_PROMPT_PATH}`);
-});
+  const BIND_HOST = sanitizeEnv(process.env.BIND_HOST) || '0.0.0.0';
+  server.listen(PORT, BIND_HOST, () => {
+    console.log(`[Kimi Bridge] listening on http://${BIND_HOST}:${PORT}`);
+    console.log(`[Kimi Bridge] pipeline=${PIPELINE_ENABLED ? 'on' : 'off'}, semantic=${SEMANTIC_MODEL}, normalize=${STRUCT_MODEL}`);
+    console.log(`[Kimi Bridge] skill=${SKILL_PROMPT_PATH}`);
+  });
+}
+
+module.exports = {
+  server,
+  buildHealthPayload
+};

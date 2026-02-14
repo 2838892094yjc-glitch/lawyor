@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: lawyor-ai-bridge
+    runtime: node
+    repo: https://github.com/2838892094yjc-glitch/lawyor
+    branch: main
+    rootDir: .
+    buildCommand: "npm install"
+    startCommand: "node kimi-analyze-server.js"
+    autoDeploy: true
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: BIND_HOST
+        value: 0.0.0.0
+      - key: PORT
+        sync: false
+      - key: KIMI_API_KEY
+        sync: false
+      - key: KIMI_MODEL
+        value: moonshot-v1-32k

@@ -1,0 +1,23 @@
+name: Keep Vercel Awake
+
+on:
+  schedule:
+    # 每5分钟唤醒一次，保证服务不休眠
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping-vercel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Vercel Health
+        run: |
+          echo "Pinging Vercel to keep awake..."
+          curl -s -o /dev/null -w "%{http_code}" "https://lawyor-1s5d.vercel.app/api/health"
+          echo "Done!"
+
+      - name: Ping Taskpane
+        run: |
+          echo "Pinging taskpane..."
+          curl -s -o /dev/null -w "%{http_code}" "https://lawyor-1s5d.vercel.app/taskpane.html"
+          echo "Done!"

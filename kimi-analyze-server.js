@@ -2,7 +2,7 @@
 
 /**
  * Local AI bridge for WPS add-in.
- * Accepts POST /analyze { text, chunk_size } and forwards to Kimi/Moonshot API.
+ * Accepts POST /analyze { text, chunk_size } and forwards to Claude API (via proxy).
  */
 
 const http = require('http');
@@ -39,8 +39,8 @@ function parseBoolEnv(name, fallback) {
 
 function loadEnvFiles() {
   const candidates = [
-    path.join(__dirname, '.env.kimi.local'),
-    path.join(__dirname, '.env.kimi')
+    path.join(__dirname, '.env.claude.local'),
+    path.join(__dirname, '.env.claude')
   ];
 
   for (const filePath of candidates) {
@@ -72,30 +72,31 @@ loadEnvFiles();
 const PORT = parseNumberEnv('PORT', parseNumberEnv('AI_BRIDGE_PORT', 8765));
 const MAX_INPUT_CHARS = parseNumberEnv('MAX_INPUT_CHARS', 24000);
 const SKILL_PROMPT_PATH = process.env.SKILL_PROMPT_PATH || path.join(__dirname, 'contract-template-transformation-skill', 'SKILL.md');
-const KIMI_API_KEY = sanitizeEnv(process.env.KIMI_API_KEY || process.env.MOONSHOT_API_KEY);
-const KIMI_API_URL = process.env.KIMI_API_URL || 'https://api.moonshot.cn/v1/chat/completions';
+const CLAUDE_API_KEY = sanitizeEnv(process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || '');
+const CLAUDE_API_BASE = process.env.ANTHROPIC_BASE_URL || 'https://main.codesuc.top/api';
+const CLAUDE_API_URL = CLAUDE_API_BASE + '/v1/messages';
 
-const LEGACY_MODEL = sanitizeEnv(process.env.KIMI_MODEL || process.env.MOONSHOT_MODEL) || 'moonshot-v1-32k';
-const LEGACY_TEMPERATURE = parseNumberEnv('KIMI_TEMPERATURE', 0);
-const LEGACY_TIMEOUT_MS = parseNumberEnv('KIMI_REQUEST_TIMEOUT_MS', 30000);
-const LEGACY_MAX_TOKENS = parseNumberEnv('KIMI_MAX_TOKENS', 1200);
+const CLAUDE_DEFAULT_MODEL = sanitizeEnv(process.env.CLAUDE_MODEL) || 'claude-sonnet-4-20250514';
+const LEGACY_TEMPERATURE = parseNumberEnv('CLAUDE_TEMPERATURE', 0);
+const LEGACY_TIMEOUT_MS = parseNumberEnv('CLAUDE_REQUEST_TIMEOUT_MS', 60000);
+const LEGACY_MAX_TOKENS = parseNumberEnv('CLAUDE_MAX_TOKENS', 4096);
 
-const PIPELINE_ENABLED = parseBoolEnv('KIMI_PIPELINE_ENABLED', true);
-const PIPELINE_FALLBACK_DIRECT = parseBoolEnv('KIMI_PIPELINE_FALLBACK_DIRECT', true);
+const PIPELINE_ENABLED = parseBoolEnv('CLAUDE_PIPELINE_ENABLED', true);
+const PIPELINE_FALLBACK_DIRECT = parseBoolEnv('CLAUDE_PIPELINE_FALLBACK_DIRECT', true);
 
-const SEMANTIC_MODEL = sanitizeEnv(process.env.KIMI_SEMANTIC_MODEL) || 'kimi-k2.5';
-const SEMANTIC_TEMPERATURE = parseNumberEnv('KIMI_SEMANTIC_TEMPERATURE', 1);
-const SEMANTIC_MAX_TOKENS = parseNumberEnv('KIMI_SEMANTIC_MAX_TOKENS', 1800);
-const SEMANTIC_TIMEOUT_MS = parseNumberEnv('KIMI_SEMANTIC_TIMEOUT_MS', 70000);
+const SEMANTIC_MODEL = sanitizeEnv(process.env.CLAUDE_SEMANTIC_MODEL) || CLAUDE_DEFAULT_MODEL;
+const SEMANTIC_TEMPERATURE = parseNumberEnv('CLAUDE_SEMANTIC_TEMPERATURE', 1);
+const SEMANTIC_MAX_TOKENS = parseNumberEnv('CLAUDE_SEMANTIC_MAX_TOKENS', 4096);
+const SEMANTIC_TIMEOUT_MS = parseNumberEnv('CLAUDE_SEMANTIC_TIMEOUT_MS', 90000);
 
-const STRUCT_MODEL = sanitizeEnv(process.env.KIMI_STRUCT_MODEL || process.env.KIMI_MODEL || process.env.MOONSHOT_MODEL) || 'moonshot-v1-32k';
-const STRUCT_TEMPERATURE = parseNumberEnv('KIMI_STRUCT_TEMPERATURE', LEGACY_TEMPERATURE);
-const STRUCT_MAX_TOKENS = parseNumberEnv('KIMI_STRUCT_MAX_TOKENS', LEGACY_MAX_TOKENS);
-const STRUCT_TIMEOUT_MS = parseNumberEnv('KIMI_STRUCT_TIMEOUT_MS', LEGACY_TIMEOUT_MS);
+const STRUCT_MODEL = sanitizeEnv(process.env.CLAUDE_STRUCT_MODEL) || CLAUDE_DEFAULT_MODEL;
+const STRUCT_TEMPERATURE = parseNumberEnv('CLAUDE_STRUCT_TEMPERATURE', LEGACY_TEMPERATURE);
+const STRUCT_MAX_TOKENS = parseNumberEnv('CLAUDE_STRUCT_MAX_TOKENS', LEGACY_MAX_TOKENS);
+const STRUCT_TIMEOUT_MS = parseNumberEnv('CLAUDE_STRUCT_TIMEOUT_MS', LEGACY_TIMEOUT_MS);
 
-const FORMAT_MODEL = sanitizeEnv(process.env.KIMI_FORMAT_MODEL || STRUCT_MODEL);
-const FORMAT_TIMEOUT_MS = parseNumberEnv('KIMI_FORMAT_TIMEOUT_MS', 60000);
-const NETWORK_RETRIES = Math.max(0, parseNumberEnv('KIMI_NETWORK_RETRIES', 1));
+const FORMAT_MODEL = sanitizeEnv(process.env.CLAUDE_FORMAT_MODEL) || STRUCT_MODEL;
+const FORMAT_TIMEOUT_MS = parseNumberEnv('CLAUDE_FORMAT_TIMEOUT_MS', 90000);
+const NETWORK_RETRIES = Math.max(0, parseNumberEnv('CLAUDE_NETWORK_RETRIES', 1));
 
 const bridgeMetrics = {
   startedAt: Date.now(),
@@ -140,11 +141,11 @@ function normalizeModelName(model) {
 
 function resolveTemperatureForModel(model, requestedTemperature, stageLabel) {
   const normalized = normalizeModelName(model);
-  const isKimiK25 = normalized.includes('kimi-k2.5');
+  const isKimiK25 = false; // Claude models don't need this constraint
 
   if (isKimiK25 && Number(requestedTemperature) !== 1) {
     if (!temperatureWarnedModels.has(normalized)) {
-      console.warn(`[Kimi Bridge] ${stageLabel} forcing temperature=1 for model=${model}`);
+      console.warn(`[Claude Bridge] ${stageLabel} forcing temperature=1 for model=${model}`);
       temperatureWarnedModels.add(normalized);
     }
     return 1;
@@ -168,13 +169,28 @@ function readSkillPrompt() {
 }
 
 function extractTextContent(chatResponse) {
+  // Anthropic API format: { content: [{ text: "...", type: "text" }], type: "message", ... }
+  if (chatResponse && chatResponse.type === 'message' && Array.isArray(chatResponse.content)) {
+    const text = chatResponse.content
+      .map((item) => {
+        if (!item) return '';
+        if (typeof item.text === 'string') return item.text;
+        return '';
+      })
+      .join('\n')
+      .trim();
+
+    if (text) return text;
+  }
+
+  // OpenAI compatible format (fallback): { choices: [{ message: { content: "..." } }] }
   if (!chatResponse || !Array.isArray(chatResponse.choices) || chatResponse.choices.length === 0) {
-    throw new Error('Kimi response missing choices');
+    throw new Error('Claude response missing choices');
   }
 
   const msg = chatResponse.choices[0] && chatResponse.choices[0].message;
   if (!msg || msg.content === undefined || msg.content === null) {
-    throw new Error('Kimi response missing message content');
+    throw new Error('Claude response missing message content');
   }
 
   if (typeof msg.content === 'string') {
@@ -195,7 +211,7 @@ function extractTextContent(chatResponse) {
     if (text) return text;
   }
 
-  throw new Error('Unsupported Kimi message content format');
+  throw new Error('Unsupported Claude message content format');
 }
 
 function tryParseJsonObject(rawText) {
@@ -257,7 +273,7 @@ function tryParseJsonObject(rawText) {
     }
   }
 
-  throw new Error('Unable to parse JSON from Kimi response');
+  throw new Error('Unable to parse JSON from Claude response');
 }
 
 function validateOutputShape(parsed) {
@@ -531,7 +547,7 @@ function enforcePluginCompatibility(parsed) {
 
   const warnings = validation.warnings || [];
   if (warnings.length > 0) {
-    console.warn('[Kimi Bridge] schema warnings: ' + warnings.slice(0, 5).join(' | '));
+    console.warn('[Claude Bridge] schema warnings: ' + warnings.slice(0, 5).join(' | '));
   }
 
   return { parsed, warnings };
@@ -548,11 +564,12 @@ async function callChatCompletion({ messages, model, temperature, maxTokens, tim
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const response = await fetch(KIMI_API_URL, {
+      const response = await fetch(CLAUDE_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${KIMI_API_KEY}`
+          'x-api-key': CLAUDE_API_KEY,
+          'anthropic-version': '2023-06-01'
         },
         signal: controller.signal,
         body: JSON.stringify({
@@ -589,7 +606,7 @@ async function callChatCompletion({ messages, model, temperature, maxTokens, tim
       return {
         contentText: extractTextContent(parsedResponse),
         latencyMs: Date.now() - startedAt,
-        finishReason: parsedResponse.choices && parsedResponse.choices[0] ? parsedResponse.choices[0].finish_reason : null,
+        finishReason: parsedResponse.stop_reason || (parsedResponse.choices && parsedResponse.choices[0] ? parsedResponse.choices[0].finish_reason : null),
         attempts: attempt + 1
       };
     } catch (err) {
@@ -657,16 +674,16 @@ function buildDirectAnalyzePrompt({ skillPrompt, clippedText }) {
     `Follow this skill spec exactly:\n\n${skillPrompt}`
   ].join('\n\n');
 
+  // Note: Due to proxy issues with system role, we embed system prompt in user message
   return {
     messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: `Contract text:\n${clippedText}` }
+      { role: 'user', content: `[System instructions]\n${system}\n\n[User request]\nContract text:\n${clippedText}` }
     ],
     model: LEGACY_MODEL,
     temperature: LEGACY_TEMPERATURE,
     maxTokens: LEGACY_MAX_TOKENS,
     timeoutMs: LEGACY_TIMEOUT_MS,
-    stageLabel: 'Kimi direct-analyze'
+    stageLabel: 'Claude direct-analyze'
   };
 }
 
@@ -692,6 +709,7 @@ async function runDirectAnalyze({ skillPrompt, clippedText }) {
 }
 
 async function runPipelineAnalyze({ skillPrompt, clippedText }) {
+  // Note: Due to proxy issues with system role, we embed system prompt in user message
   const semanticSystem = [
     'You are a senior contract variable mining expert.',
     'Task: identify as many template variables as possible from the contract text.',
@@ -703,14 +721,13 @@ async function runPipelineAnalyze({ skillPrompt, clippedText }) {
 
   const semanticResult = await callChatCompletion({
     messages: [
-      { role: 'system', content: semanticSystem },
-      { role: 'user', content: `Contract text:\n${clippedText}` }
+      { role: 'user', content: `[System instructions]\n${semanticSystem}\n\n[User request]\nContract text:\n${clippedText}` }
     ],
     model: SEMANTIC_MODEL,
     temperature: SEMANTIC_TEMPERATURE,
     maxTokens: SEMANTIC_MAX_TOKENS,
     timeoutMs: SEMANTIC_TIMEOUT_MS,
-    stageLabel: 'Kimi semantic-stage'
+    stageLabel: 'Claude semantic-stage'
   });
 
   let semanticRepairMs = null;
@@ -721,23 +738,13 @@ async function runPipelineAnalyze({ skillPrompt, clippedText }) {
   } catch (_err) {
     const semanticRepair = await callChatCompletion({
       messages: [
-        {
-          role: 'system',
-          content: 'Convert the provided semantic analysis text into JSON object with key variables only. Output JSON only.'
-        },
-        {
-          role: 'user',
-          content: [
-            'Contract text:\n' + clippedText,
-            'Semantic analysis text:\n' + semanticResult.contentText
-          ].join('\n\n')
-        }
+        { role: 'user', content: `[System instructions]\nConvert the provided semantic analysis text into JSON object with key variables only. Output JSON only.\n\n[User request]\nContract text:\n${clippedText}\n\nSemantic analysis text:\n${semanticResult.contentText}` }
       ],
       model: STRUCT_MODEL,
       temperature: STRUCT_TEMPERATURE,
       maxTokens: STRUCT_MAX_TOKENS,
       timeoutMs: STRUCT_TIMEOUT_MS,
-      stageLabel: 'Kimi semantic-repair-stage'
+      stageLabel: 'Claude semantic-repair-stage'
     });
     semanticRepairMs = semanticRepair.latencyMs;
     semanticTextForNormalize = semanticRepair.contentText;
@@ -746,7 +753,7 @@ async function runPipelineAnalyze({ skillPrompt, clippedText }) {
 
   const semanticVariables = normalizeSemanticVariables(semanticParsed);
   if (semanticVariables.length === 0) {
-    console.warn('[Kimi Bridge] semantic-stage yielded zero normalized candidates; normalize-stage will use raw semantic text');
+    console.warn('[Claude Bridge] semantic-stage yielded zero normalized candidates; normalize-stage will use raw semantic text');
   }
 
   const normalizeSystem = [
@@ -772,20 +779,13 @@ async function runPipelineAnalyze({ skillPrompt, clippedText }) {
 
   const normalizeResult = await callChatCompletion({
     messages: [
-      { role: 'system', content: normalizeSystem },
-      {
-        role: 'user',
-        content: [
-          `Contract text:\n${clippedText}`,
-          `Semantic candidates JSON:\n${semanticPayload}`
-        ].join('\n\n')
-      }
+      { role: 'user', content: `[System instructions]\n${normalizeSystem}\n\n[User request]\nContract text:\n${clippedText}\n\nSemantic candidates JSON:\n${semanticPayload}` }
     ],
     model: STRUCT_MODEL,
     temperature: STRUCT_TEMPERATURE,
     maxTokens: STRUCT_MAX_TOKENS,
     timeoutMs: STRUCT_TIMEOUT_MS,
-    stageLabel: 'Kimi normalize-stage'
+    stageLabel: 'Claude normalize-stage'
   });
 
   let normalizeRepairMs = null;
@@ -795,23 +795,13 @@ async function runPipelineAnalyze({ skillPrompt, clippedText }) {
   } catch (_err) {
     const normalizeRepair = await callChatCompletion({
       messages: [
-        {
-          role: 'system',
-          content: 'Convert the provided text to STRICT plugin JSON object {"variables": [...]} only. No markdown.'
-        },
-        {
-          role: 'user',
-          content: [
-            'Contract text:\n' + clippedText,
-            'Raw normalize-stage output:\n' + normalizeResult.contentText
-          ].join('\n\n')
-        }
+        { role: 'user', content: `[System instructions]\nConvert the provided text to STRICT plugin JSON object {"variables": [...]} only. No markdown.\n\n[User request]\nContract text:\n${clippedText}\n\nRaw normalize-stage output:\n${normalizeResult.contentText}` }
       ],
       model: STRUCT_MODEL,
       temperature: STRUCT_TEMPERATURE,
       maxTokens: STRUCT_MAX_TOKENS,
       timeoutMs: STRUCT_TIMEOUT_MS,
-      stageLabel: 'Kimi normalize-repair-stage'
+      stageLabel: 'Claude normalize-repair-stage'
     });
     normalizeRepairMs = normalizeRepair.latencyMs;
     normalizedParsed = tryParseJsonObject(normalizeRepair.contentText);
@@ -858,9 +848,9 @@ function runHeuristicAnalyze({ clippedText, reason, mode = 'heuristic_fallback' 
   };
 }
 
-async function callKimiAnalyze({ text }) {
-  if (!KIMI_API_KEY) {
-    throw new Error('Missing KIMI_API_KEY (or MOONSHOT_API_KEY)');
+async function callClaudeAnalyze({ text }) {
+  if (!CLAUDE_API_KEY) {
+    throw new Error('Missing CLAUDE_API_KEY (or ANTHROPIC_API_KEY)');
   }
 
   const skillPrompt = readSkillPrompt();
@@ -870,7 +860,7 @@ async function callKimiAnalyze({ text }) {
     try {
       return await runDirectAnalyze({ skillPrompt, clippedText });
     } catch (directErr) {
-      console.warn(`[Kimi Bridge] direct failed, fallback to heuristic: ${directErr.message}`);
+      console.warn(`[Claude Bridge] direct failed, fallback to heuristic: ${directErr.message}`);
       return runHeuristicAnalyze({ clippedText, reason: directErr.message, mode: 'direct_fallback_heuristic' });
     }
   }
@@ -879,11 +869,11 @@ async function callKimiAnalyze({ text }) {
     return await runPipelineAnalyze({ skillPrompt, clippedText });
   } catch (pipelineErr) {
     if (!PIPELINE_FALLBACK_DIRECT) {
-      console.warn(`[Kimi Bridge] pipeline failed, fallback to heuristic: ${pipelineErr.message}`);
+      console.warn(`[Claude Bridge] pipeline failed, fallback to heuristic: ${pipelineErr.message}`);
       return runHeuristicAnalyze({ clippedText, reason: pipelineErr.message, mode: 'pipeline_fallback_heuristic' });
     }
 
-    console.warn(`[Kimi Bridge] pipeline failed, fallback to direct: ${pipelineErr.message}`);
+    console.warn(`[Claude Bridge] pipeline failed, fallback to direct: ${pipelineErr.message}`);
     try {
       const direct = await runDirectAnalyze({ skillPrompt, clippedText });
       return {
@@ -895,7 +885,7 @@ async function callKimiAnalyze({ text }) {
         }
       };
     } catch (directErr) {
-      console.warn(`[Kimi Bridge] direct fallback failed, fallback to heuristic: ${directErr.message}`);
+      console.warn(`[Claude Bridge] direct fallback failed, fallback to heuristic: ${directErr.message}`);
       return runHeuristicAnalyze({
         clippedText,
         reason: `pipeline: ${pipelineErr.message}; direct: ${directErr.message}`,
@@ -935,7 +925,7 @@ function buildHealthPayload() {
 
   return {
     ok: true,
-    provider: 'kimi',
+    provider: 'claude',
     model: STRUCT_MODEL,
     temperature: STRUCT_TEMPERATURE,
     requestTimeoutMs: STRUCT_TIMEOUT_MS,
@@ -1011,8 +1001,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      if (!KIMI_API_KEY) {
-        sendJson(res, 500, { error: 'Missing KIMI_API_KEY' });
+      if (!CLAUDE_API_KEY) {
+        sendJson(res, 500, { error: 'Missing CLAUDE_API_KEY' });
         return;
       }
 
@@ -1026,15 +1016,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       // 构建消息数组（执行指令不需要会话历史）
+      // Note: Due to proxy issues with system role, we embed system prompt in user message
       const messages = [
-        { role: 'system', content: formatSkillPrompt },
-        {
-          role: 'user',
-          content: [
-            `文档上下文: ${JSON.stringify(context)}`,
-            `用户需求: ${text}`
-          ].join('\n\n')
-        }
+        { role: 'user', content: `[System instructions]\n${formatSkillPrompt}\n\n[User request]\n文档上下文: ${JSON.stringify(context)}\n\n用户需求: ${text}` }
       ];
 
       console.log(`[/format] executing without chatContext, messages: ${messages.length}`);
@@ -1046,6 +1030,59 @@ const server = http.createServer(async (req, res) => {
         maxTokens: 4096,
         timeoutMs: FORMAT_TIMEOUT_MS,
         stageLabel: 'Kimi format-stage'
+      });
+
+      setCors(res);
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.end(chatResult.contentText);
+    } catch (err) {
+      sendJson(res, 500, { error: err.message });
+    }
+    return;
+  }
+
+  // POST /format-direct: 消融实验 - 直接代码模式
+  if (req.method === 'POST' && req.url === '/format-direct') {
+    try {
+      const payload = await readJsonBody(req);
+      const text = payload && typeof payload.text === 'string' ? payload.text : '';
+      const context = payload && payload.context ? payload.context : {};
+
+      if (!text.trim()) {
+        sendJson(res, 400, { error: 'text is required' });
+        return;
+      }
+
+      if (!CLAUDE_API_KEY) {
+        sendJson(res, 500, { error: 'Missing CLAUDE_API_KEY' });
+        return;
+      }
+
+      // 使用 SKILL_DIRECT.md 作为 prompt
+      const formatDirectSkillPath = path.join(__dirname, 'formatting-skill', 'SKILL_DIRECT.md');
+      let formatDirectSkillPrompt;
+      try {
+        formatDirectSkillPrompt = fs.readFileSync(formatDirectSkillPath, 'utf8');
+      } catch (readErr) {
+        sendJson(res, 500, { error: `Cannot read formatting-direct skill: ${readErr.message}` });
+        return;
+      }
+
+      // Note: Due to proxy issues with system role, we embed system prompt in user message
+      const messages = [
+        { role: 'user', content: `[System instructions]\n${formatDirectSkillPrompt}\n\n[User request]\n文档上下文: ${JSON.stringify(context)}\n\n用户需求: ${text}` }
+      ];
+
+      console.log(`[/format-direct] ablation mode=direct, messages: ${messages.length}`);
+
+      const chatResult = await callChatCompletion({
+        messages: messages,
+        model: FORMAT_MODEL,
+        temperature: STRUCT_TEMPERATURE,
+        maxTokens: 4096,
+        timeoutMs: FORMAT_TIMEOUT_MS,
+        stageLabel: 'Kimi format-direct-stage'
       });
 
       setCors(res);
@@ -1090,10 +1127,10 @@ const server = http.createServer(async (req, res) => {
 注意：只要涉及文档格式、排版、样式，全部归类为 FORMAT。
 `;
 
+      // Note: Due to proxy issues with system role, we embed system prompt in user message
       const dispatchMessages = [
-        { role: 'system', content: dispatchSystemPrompt },
         ...chatContext.slice(-6), // 只传最近6轮上下文
-        { role: 'user', content: text }
+        { role: 'user', content: `[System instructions]\n${dispatchSystemPrompt}\n\n[User request]\n${text}` }
       ];
 
       const dispatchResult = await callChatCompletion({
@@ -1159,7 +1196,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const result = await callKimiAnalyze({ text });
+      const result = await callClaudeAnalyze({ text });
 
       bridgeMetrics.analyzeSuccess += 1;
       bridgeMetrics.lastAnalyzeAt = Date.now();
@@ -1194,15 +1231,15 @@ const server = http.createServer(async (req, res) => {
 
 if (require.main === module) {
   server.on('error', (err) => {
-    console.error(`[Kimi Bridge] startup failed: ${err.message}`);
+    console.error(`[Claude Bridge] startup failed: ${err.message}`);
     process.exit(1);
   });
 
   const BIND_HOST = sanitizeEnv(process.env.BIND_HOST) || '0.0.0.0';
   server.listen(PORT, BIND_HOST, () => {
-    console.log(`[Kimi Bridge] listening on http://${BIND_HOST}:${PORT}`);
-    console.log(`[Kimi Bridge] pipeline=${PIPELINE_ENABLED ? 'on' : 'off'}, semantic=${SEMANTIC_MODEL}, normalize=${STRUCT_MODEL}`);
-    console.log(`[Kimi Bridge] skill=${SKILL_PROMPT_PATH}`);
+    console.log(`[Claude Bridge] listening on http://${BIND_HOST}:${PORT}`);
+    console.log(`[Claude Bridge] pipeline=${PIPELINE_ENABLED ? 'on' : 'off'}, semantic=${SEMANTIC_MODEL}, normalize=${STRUCT_MODEL}`);
+    console.log(`[Claude Bridge] skill=${SKILL_PROMPT_PATH}`);
   });
 }
 
